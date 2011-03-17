@@ -3,6 +3,8 @@
 
 """Static file generator for Django."""
 import stat
+import gzip
+import StringIO
 
 from django.utils.functional import Promise
 
@@ -44,6 +46,7 @@ class StaticGenerator(object):
 
         self.resources = self.extract_resources(resources)
         self.server_name = self.get_server_name()
+        self.gzip = getattr(self.settings, 'STATIC_GENERATOR_GZIP', False)
 
         try:
             self.web_root = getattr(self.settings, 'WEB_ROOT')
@@ -193,7 +196,19 @@ class StaticGenerator(object):
                 self.fs.makedirs(directory)
             except:
                 raise StaticGeneratorException('Could not create the directory: %s' % directory)
-
+        
+        self.atomic_write(filename, directory, content)
+        
+        if self.gzip:
+            strbuff = StringIO.StringIO()
+            gz = gzip.GzipFile(fileobj=strbuff, mode='wb', compresslevel=9)
+            gz.write(content)
+            gz.close()
+            content_gz = strbuff.getvalue()
+            strbuff.close()
+            self.atomic_write("%s.gz" % filename, directory, content_gz)
+    
+    def atomic_write(self, filename, directory, content):
         try:
             f, tmpname = self.fs.tempfile(directory=directory)
             self.fs.write(f, content)
@@ -202,13 +217,15 @@ class StaticGenerator(object):
             self.fs.rename(tmpname, filename)
         except:
             raise StaticGeneratorException('Could not create the file: %s' % filename)
-
+    
     def delete_from_path(self, path):
         """Deletes file, attempts to delete directory"""
         filename, directory = self.get_filename_from_path(path)
         try:
             if self.fs.exists(filename):
                 self.fs.remove(filename)
+            if self.gzip and self.fs.exists("%s.gz" % filename):
+                self.fs.remove("%s.gz" % filename)
         except:
             raise StaticGeneratorException('Could not delete file: %s' % filename)
 
